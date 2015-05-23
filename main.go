@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"container/list"
 	"encoding/binary"
+	"encoding/gob"
+	"flag"
 	"fmt"
 	"log"
 	"math/rand"
@@ -11,19 +13,29 @@ import (
 	"time"
 )
 
+var foreign string
+var port string
+
+func init() {
+	flag.StringVar(&foreign, "c", "", "Peer connects initially to the given Host (Format: host:port")
+	flag.StringVar(&port, "s", "4000", "Peer works initially as server and handles new incoming connections. Listens on given Port.")
+}
+
 func main() {
 	log.SetFlags(0)
 	rand.Seed(time.Now().UTC().UnixNano())
 
-	peer := &tcpeer{uint64(rand.Int63()), make(chan string), list.New()}
+	flag.Parse()
+
+	peer := &tcpeer{uint64(rand.Int63()), make(chan string), false, list.New()}
 	log.Println("TCPeer", peer.id)
 
-	var str string
-	fmt.Scanf("%s", &str)
-
-	if bytes.Equal([]byte(str), []byte("c")) {
-		str = "127.0.0.1:9988"
-		alien, err := net.ResolveTCPAddr("tcp", str)
+	if foreign != "" {
+		// foreign = "127.0.0.1:9988"
+		alien, err := net.ResolveTCPAddr("tcp", foreign)
+		if err != nil {
+			log.Println("Error: Could not resolve foreign address")
+		}
 
 		log.Println("Connecting to: ", alien.String())
 
@@ -39,10 +51,12 @@ func main() {
 			peer.inputWatcher()
 		}
 	} else {
-		service := ":9988"
+		// port = 4000
+		peer.isLeader = true
+		service := ":" + port
 		tcpAddr, err := net.ResolveTCPAddr("tcp", service)
 		if err != nil {
-			log.Println("Error: Could not resolve address")
+			log.Println("Error: Could not resolve local address")
 		}
 
 		netListen, err := net.Listen(tcpAddr.Network(), tcpAddr.String())
@@ -51,8 +65,10 @@ func main() {
 		} else {
 			defer netListen.Close()
 
+			go peer.inputWatcher()
+
 			for {
-				log.Println("Waiting for clients")
+				log.Println("Waiting for clients on Port:", port)
 				conn, err := netListen.Accept()
 				if err != nil {
 					log.Println("TCPeer error:", err)
@@ -68,6 +84,7 @@ func main() {
 type tcpeer struct {
 	id             uint64
 	send           chan string //currently not in use
+	isLeader       bool
 	ConnectionList *list.List
 }
 
@@ -119,10 +136,19 @@ func (t *tcpeer) connectionHandler(conn net.Conn) {
 
 	newConnection := &connection{id, make(chan string), conn, make(chan bool)}
 
+	t.ConnectionList.PushBack(*newConnection)
+
+	if t.isLeader {
+		t.sendNewHost(*newConnection)
+	}
+
 	go newConnection.connectionReader()
 	go newConnection.connectionSender()
+}
 
-	t.ConnectionList.PushBack(*newConnection)
+func (t *tcpeer) sendNewHost(c connection) {
+	b, _ := encodeConnection(c)
+	log.Println(len(b))
 }
 
 type connection struct {
@@ -187,4 +213,20 @@ func (c *connection) equal(other *connection) bool {
 		}
 	}
 	return false
+}
+
+func encodeConnection(c connection) ([]byte, error) {
+	var buffer bytes.Buffer
+	enc := gob.NewEncoder(&buffer)
+
+	err := enc.Encode(c)
+	if err != nil {
+		log.Println("Error: Could not encode Connection")
+		return nil, err
+	}
+
+	b := buffer.Bytes()
+	log.Println("Encoded Connection. Buffer size:", len(b))
+
+	return b, nil
 }
