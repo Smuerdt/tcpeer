@@ -8,39 +8,57 @@ import (
 	"log"
 	"math/rand"
 	"net"
+	"time"
 )
 
 func main() {
 	log.SetFlags(0)
-	log.Println("TCPeer")
+	rand.Seed(time.Now().UTC().UnixNano())
 
 	peer := &tcpeer{uint64(rand.Int63()), make(chan string), list.New()}
+	log.Println("TCPeer", peer.id)
 
-	service := ":9988"
-	tcpAddr, err := net.ResolveTCPAddr("tcp", service)
-	if err != nil {
-		log.Println("Error: Could not resolve address")
-	} else {
-		var str string
-		fmt.Scanf("%s", &str)
+	var str string
+	fmt.Scanf("%s", &str)
 
-		if bytes.Equal([]byte(str), []byte("c")) {
+	if bytes.Equal([]byte(str), []byte("c")) {
+		str = "127.0.0.1:9988"
+		alien, err := net.ResolveTCPAddr("tcp", str)
 
+		log.Println("Connecting to: ", alien.String())
+
+		conn, err := net.Dial("tcp", alien.String())
+		if err != nil {
+			log.Println("Error: Could not connect")
 		} else {
-			netListen, err := net.Listen(tcpAddr.Network(), tcpAddr.String())
-			if err != nil {
-				log.Println(err)
-			} else {
-				defer netListen.Close()
+			defer conn.Close()
 
-				for {
-					log.Println("Waiting for clients")
-					connection, err := netListen.Accept()
-					if err != nil {
-						log.Println("TCPeer error:", err)
-					} else {
-						go peer.connectionHandler(connection)
-					}
+			log.Println("Successfully connected")
+			peer.sendID(conn)
+			go peer.connectionHandler(conn)
+			peer.inputWatcher()
+		}
+	} else {
+		service := ":9988"
+		tcpAddr, err := net.ResolveTCPAddr("tcp", service)
+		if err != nil {
+			log.Println("Error: Could not resolve address")
+		}
+
+		netListen, err := net.Listen(tcpAddr.Network(), tcpAddr.String())
+		if err != nil {
+			log.Println(err)
+		} else {
+			defer netListen.Close()
+
+			for {
+				log.Println("Waiting for clients")
+				conn, err := netListen.Accept()
+				if err != nil {
+					log.Println("TCPeer error:", err)
+				} else {
+					peer.sendID(conn)
+					go peer.connectionHandler(conn)
 				}
 			}
 		}
@@ -51,6 +69,14 @@ type tcpeer struct {
 	id             uint64
 	send           chan string //currently not in use
 	ConnectionList *list.List
+}
+
+func (t *tcpeer) sendID(c net.Conn) {
+	log.Println("Connection sending ID:", t.id)
+
+	buffer := make([]byte, 2048)
+	bytesWritten := binary.PutUvarint(buffer, t.id)
+	c.Write(buffer[0:bytesWritten])
 }
 
 func (t *tcpeer) remove(c connection) {
@@ -76,7 +102,8 @@ func (t *tcpeer) inputWatcher() {
 }
 
 func (t *tcpeer) connectionHandler(conn net.Conn) {
-	buffer := make([]byte, 1024)
+	log.Println("Waiting for foreign ID")
+	buffer := make([]byte, 2048)
 	bytesRead, err := conn.Read(buffer)
 	if err != nil {
 		log.Println("Connection connection error:", err)
@@ -87,6 +114,8 @@ func (t *tcpeer) connectionHandler(conn net.Conn) {
 		log.Println("Error: Could not resolve ID")
 		return
 	}
+
+	log.Println("Received foreign ID:", id)
 
 	newConnection := &connection{id, make(chan string), conn, make(chan bool)}
 
@@ -136,16 +165,8 @@ func (c *connection) connectionReader() {
 		}
 
 		log.Println("Read", bytesRead, "bytes")
-		log.Println("ConnectionReader received >", string(buffer[0:bytesRead]))
+		log.Println("ConnectionReader received >", string(buffer[0:bytesRead]), "from", c.id)
 	}
-}
-
-func (c *connection) sendID() {
-	log.Println("Connection sending ID:")
-
-	buffer := make([]byte, 1024)
-	bytesWritten := binary.PutUvarint(buffer, c.id)
-	c.Conn.Write(buffer[0:bytesWritten])
 }
 
 func (c *connection) read(buffer []byte) (int, bool) {
