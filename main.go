@@ -17,8 +17,8 @@ var foreign string
 var port string
 
 func init() {
-	flag.StringVar(&foreign, "c", "", "Peer connects initially to the given Host (Format: host:port")
-	flag.StringVar(&port, "s", "4000", "Peer works initially as server and handles new incoming connections. Listens on given Port.")
+	flag.StringVar(&foreign, "c", "", "Peer connects to the given Host (Format: host:port")
+	flag.StringVar(&port, "p", "4000", "Peer works initially as server and handles new incoming connections. Listens on given Port.")
 }
 
 func main() {
@@ -48,34 +48,31 @@ func main() {
 			log.Println("Successfully connected")
 			peer.sendID(conn)
 			go peer.connectionHandler(conn)
-			peer.inputWatcher()
 		}
+	}
+	// port = 4000
+	service := ":" + port
+	tcpAddr, err := net.ResolveTCPAddr("tcp", service)
+	if err != nil {
+		log.Println("Error: Could not resolve local address")
+	}
+
+	netListen, err := net.Listen(tcpAddr.Network(), tcpAddr.String())
+	if err != nil {
+		log.Println(err)
 	} else {
-		// port = 4000
-		peer.isLeader = true
-		service := ":" + port
-		tcpAddr, err := net.ResolveTCPAddr("tcp", service)
-		if err != nil {
-			log.Println("Error: Could not resolve local address")
-		}
+		defer netListen.Close()
 
-		netListen, err := net.Listen(tcpAddr.Network(), tcpAddr.String())
-		if err != nil {
-			log.Println(err)
-		} else {
-			defer netListen.Close()
+		go peer.inputWatcher()
 
-			go peer.inputWatcher()
-
-			for {
-				log.Println("Waiting for clients on Port:", port)
-				conn, err := netListen.Accept()
-				if err != nil {
-					log.Println("TCPeer error:", err)
-				} else {
-					peer.sendID(conn)
-					go peer.connectionHandler(conn)
-				}
+		for {
+			log.Println("Waiting for clients on Port:", port)
+			conn, err := netListen.Accept()
+			if err != nil {
+				log.Println("TCPeer error:", err)
+			} else {
+				peer.sendID(conn)
+				go peer.connectionHandler(conn)
 			}
 		}
 	}
@@ -84,7 +81,6 @@ func main() {
 type tcpeer struct {
 	id             uint64
 	send           chan string //currently not in use
-	isLeader       bool
 	ConnectionList *list.List
 }
 
@@ -138,9 +134,9 @@ func (t *tcpeer) connectionHandler(conn net.Conn) {
 
 	t.ConnectionList.PushBack(*newConnection)
 
-	if t.isLeader {
-		t.sendNewHost(*newConnection)
-	}
+	// if t.isLeader {
+	// 	t.sendNewHost(*newConnection)
+	// }
 
 	go newConnection.connectionReader()
 	go newConnection.connectionSender()
